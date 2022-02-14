@@ -6,7 +6,7 @@ var password = process.env.password;
 var md5 = require('md5-node');
 var request = require('request');
 
-v = {
+var v = {
     SYN: 0,
     ASYNC: 1,
     TDDP_INSTRUCT: 0,
@@ -62,25 +62,78 @@ function authDataDecode(e) {
     }
 }
 
-function sendCmd(cmdid, token, callback=function(){}){
-    var url = adminurl + "/?code=" + cmdid + "&async=1&id=" + token;
-    console.log(url);
-    request.post({url: url}, callback);
+function sendCmd(cmdid, token) {
+    return new Promise(function (resolve, reject) {
+        var url = adminurl + "?code=" + cmdid + "&async=1&id=" + encodeURI(token);
+        console.log(url);
+        request.post({url: url}, (err, response, body) => {
+            if (err) {
+                reject(err);
+            } else {
+                resolve(body);
+            }
+        });
+    });
 }
 
 var authhash = md5(admin + ";" + orgAuthPwd(password));
 
-sendCmd(v.TDDP_INSTRUCT, "", function(error, response, body) {
-    var rawAuthData = splitResponse(body);
-    var authData = authDataDecode(rawAuthData.data);
-    var token = securityEncode(authData.pwd, authhash, authData.dic);
-    console.log("token: " + token);
-
-    sendCmd(v.TDDP_AUTH, token, function(error, response, body){
-        console.log(body);
-        sendCmd(v.TDDP_REBOOT, token, function(error, response, body){
-            console.log(body);
+var instructPromise = function () {
+    return new Promise(function (resolve, reject) {
+        sendCmd(v.TDDP_INSTRUCT, "").then(body => {
+            var rawAuthData = splitResponse(body);
+            var authData = authDataDecode(rawAuthData.data);
+            var token = securityEncode(authData.pwd, authhash, authData.dic);
+            console.log("token: " + token);
+            resolve(token);
+        }).catch(err => {
+            reject(err);
         });
     });
-    
-})
+}
+
+var authPromise = function (token) {
+    return new Promise(function (resolve, reject) {
+        console.log(`auth with token : ${token}`);
+        sendCmd(v.TDDP_AUTH, token).then(body => {
+            if ('00000' === body.trim()) {
+                resolve();
+            } else {
+                reject(`auth failed with token : ${token}`);
+            }
+        }).catch(err => {
+            reject(err);
+        });
+    });
+}
+
+var rebootPromise = function (token) {
+    return new Promise(function (resolve, reject) {
+        console.log(`reboot with token : ${token}`);
+        sendCmd(v.TDDP_REBOOT, token).then(body => {
+            if ('00000' === body.trim()) {
+                resolve();
+            } else {
+                reject(`reboot failed with token : ${token}`);
+            }
+        }).catch(err => {
+            reject(err);
+        });
+    });
+}
+
+instructPromise().then(token => {
+        authPromise(token).then(() => {
+            console.log(`auth success`);
+            rebootPromise(token).then(() => {
+                console.log(`reboot success`);
+            }).catch(err => {
+                console.log(err);
+            });
+        }).catch(err => {
+            console.log(err);
+        });
+    }
+).catch(err => {
+    console.log(err);
+});
